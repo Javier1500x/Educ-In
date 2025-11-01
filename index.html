@@ -303,14 +303,13 @@
         </div>
     </div>
 
-
     <script>
-        // NOTA: Reemplaza "AIzaSyAXKdd2Y40OOHLdv4YoNde2o8CWRZ1gQcc" con tu clave de API real.
-        const API_KEY = "AIzaSyAXKdd2Y40OOHLdv4YoNde2o8CWRZ1gQcc"; 
+        const BACKEND_URL = "http://127.0.0.1:5001";
         const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         
         let geminiStructuredResponse = null; 
-        let quizAnswers = []; // Para almacenar las respuestas correctas
+        let quizAnswers = [];
+        let currentAudioUrl = null;
 
         // --- Funciones de Utilidad ---
 
@@ -351,7 +350,7 @@
 
         function pcmToWav(pcmData, sampleRate) {
             const numChannels = 1;
-            const bytesPerSample = 2; // 16-bit
+            const bytesPerSample = 2;
             const blockAlign = numChannels * bytesPerSample;
             const byteRate = sampleRate * blockAlign;
             const dataSize = pcmData.length * bytesPerSample;
@@ -359,23 +358,20 @@
             const view = new DataView(buffer);
 
             let offset = 0;
-            // Riff chunk
-            view.setUint32(offset, 0x52494646, false); offset += 4; // "RIFF"
-            view.setUint32(offset, 36 + dataSize, true); offset += 4; // file size
-            view.setUint32(offset, 0x57415645, false); offset += 4; // "WAVE"
-            // Fmt chunk
-            view.setUint32(offset, 0x666d7420, false); offset += 4; // "fmt "
-            view.setUint32(offset, 16, true); offset += 4; // chunk size
-            view.setUint16(offset, 1, true); offset += 2; // format (PCM)
-            view.setUint16(offset, numChannels, true); offset += 2; // channels
-            view.setUint32(offset, sampleRate, true); offset += 4; // sample rate
-            view.setUint32(offset, byteRate, true); offset += 4; // byte rate
-            view.setUint16(offset, blockAlign, true); offset += 2; // block align
-            view.setUint16(offset, 16, true); offset += 2; // bits per sample (16-bit)
-            // Data chunk
-            view.setUint32(offset, 0x64617461, false); offset += 4; // "data"
-            view.setUint32(offset, dataSize, true); offset += 4; // data size
-            // Write PCM data
+            view.setUint32(offset, 0x52494646, false); offset += 4;
+            view.setUint32(offset, 36 + dataSize, true); offset += 4;
+            view.setUint32(offset, 0x57415645, false); offset += 4;
+            view.setUint32(offset, 0x666d7420, false); offset += 4;
+            view.setUint32(offset, 16, true); offset += 4;
+            view.setUint16(offset, 1, true); offset += 2;
+            view.setUint16(offset, numChannels, true); offset += 2;
+            view.setUint32(offset, sampleRate, true); offset += 4;
+            view.setUint32(offset, byteRate, true); offset += 4;
+            view.setUint16(offset, blockAlign, true); offset += 2;
+            view.setUint16(offset, 16, true); offset += 2;
+            view.setUint32(offset, 0x64617461, false); offset += 4;
+            view.setUint32(offset, dataSize, true); offset += 4;
+            
             for (let i = 0; i < pcmData.length; i++, offset += 2) {
                 view.setInt16(offset, pcmData[i], true);
             }
@@ -383,56 +379,8 @@
             return new Blob([view], { type: 'audio/wav' });
         }
 
-
-        // --- Implementación de la API de Gemini (con backoff para reintentos) ---
-
-        async function fetchWithExponentialBackoff(apiUrl, payload, maxRetries = 5, delay = 1000) {
-            for (let i = 0; i < maxRetries; i++) {
-                try {
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (response.status === 429 && i < maxRetries - 1) {
-                        console.warn(`[API] Tasa límite alcanzada (${response.status}). Reintentando en ${delay}ms...`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                        delay *= 2; 
-                        continue;
-                    }
-
-                    if (!response.ok) {
-                        const errorBody = await response.text();
-                        console.error(`[API Error] Estado HTTP: ${response.status}`, errorBody);
-                        
-                        let errorMessage = `Error de API ${response.status}: `;
-                        try {
-                            const errorJson = JSON.parse(errorBody);
-                            errorMessage += errorJson.error?.message || 'Error desconocido';
-                        } catch {
-                            errorMessage += errorBody.substring(0, 100) + (errorBody.length > 100 ? '...' : '');
-                        }
-
-                        throw new Error(errorMessage);
-                    }
-
-                    return response;
-
-                } catch (error) {
-                    if (i === maxRetries - 1) {
-                        throw error;
-                    }
-                    console.error(`[API Fallida] Reintentando: ${error.message}`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    delay *= 2;
-                }
-            }
-        }
-
-
         // ====================================================================
-        // FUNCIÓN PRINCIPAL: Simplificación, Vocabulario y QUIZ (GEMINI)
+        // FUNCIÓN PRINCIPAL CORREGIDA
         // ====================================================================
 
         async function processAccessibility() {
@@ -440,92 +388,49 @@
             const resultsAreaEl = document.getElementById('results-area');
             const summaryEl = document.getElementById('simplified-summary');
             const vocabListEl = document.getElementById('vocabulary-list');
-            const quizContainerEl = document.getElementById('quiz-container'); // Obtener contenedor del Quiz
+            const quizContainerEl = document.getElementById('quiz-container');
             const ttsButtonEl = document.getElementById('tts-button');
             const ttsPlayButtonEl = document.getElementById('tts-play-button');
-
 
             if (complexText.split(' ').length < 20) {
                 showMessage('El texto es muy corto. Por favor, pega un texto de al menos 20 palabras para un análisis significativo.', 'global-message', true);
                 return;
             }
 
-            // 1. Limpieza y estado inicial
+            // Limpieza y estado inicial
             geminiStructuredResponse = null;
-            quizAnswers = []; // Reiniciar respuestas
-            setAppState(true, 'Iniciando proceso: Simplificación de texto y generación de Quiz (1/2)...');
+            quizAnswers = [];
+            setAppState(true, 'Iniciando proceso: Simplificación de texto y generación de Quiz...');
             resultsAreaEl.classList.remove('hidden');
             showMessage('', 'global-message', false);
             summaryEl.innerHTML = '<p class="text-gray-500">Cargando...</p>';
             vocabListEl.innerHTML = '<p class="text-gray-500">Cargando...</p>';
-            quizContainerEl.innerHTML = '<p class="text-gray-500">Cargando preguntas...</p>'; // Limpiar y poner loading en Quiz
+            quizContainerEl.innerHTML = '<p class="text-gray-500">Cargando preguntas...</p>';
             
             ttsButtonEl.disabled = true;
             ttsPlayButtonEl.disabled = true;
 
-
             try {
-                // --- FASE 1: GENERACIÓN DE TEXTO ESTRUCTURADO (GEMINI) ---
-                const textApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
-                
-                // INSTRUCCIÓN CLAVE: Pedir 3 preguntas de opción múltiple
-                const textPayload = {
-                    contents: [{ parts: [{ text: `Simplifica el siguiente texto para un nivel de lectura de 4to grado, con un lenguaje muy simple y directo. Extrae solo 2 términos de vocabulario clave y genera 3 preguntas de opción múltiple con 3 opciones cada una (A, B, C) basadas estrictamente en el resumen simplificado:\n\n${complexText}` }] }],
-                    systemInstruction: {
-                        parts: [{ text: "Eres un experto en educación inclusiva. Tu tarea es simplificar textos al máximo (nivel 4to grado), extraer el vocabulario clave y generar un quiz de 3 preguntas de opción múltiple para facilitar la comprensión. El resultado debe ser un JSON. NO incluyas ninguna explicación antes o después del JSON." }]
-                    },
-                    generationConfig: {
-                        responseMimeType: "application/json",
-                        responseSchema: {
-                            type: "OBJECT",
-                            properties: {
-                                "simplifiedSummary": { "type": "STRING", "description": "Resumen muy simple y conciso del texto, con lenguaje simple para un nivel de 4to grado." },
-                                "keyVocabulary": {
-                                    "type": "ARRAY",
-                                    "description": "Una lista de hasta 2 términos complejos del texto.",
-                                    "items": {
-                                        "type": "OBJECT",
-                                        "properties": {
-                                            "word": { "type": "STRING", "description": "El término clave." },
-                                            "simpleDefinition": { "type": "STRING", "description": "Definición simple en español, máximo 15 palabras." }
-                                        },
-                                        "required": ["word", "simpleDefinition"]
-                                    }
-                                },
-                                "multipleChoiceQuestions": {
-                                    "type": "ARRAY",
-                                    "description": "3 multiple choice questions based on the simplified summary, with 3 options and the correct index (0-2).",
-                                    "items": {
-                                        "type": "OBJECT",
-                                        "properties": {
-                                            "question": { "type": "STRING" },
-                                            "options": { "type": "ARRAY", "items": { "type": "STRING" }, "description": "Exactly 3 options." },
-                                            "correctIndex": { "type": "INTEGER", "description": "The index (0, 1, or 2) of the correct answer." }
-                                        },
-                                        "required": ["question", "options", "correctIndex"]
-                                    }
-                                }
-                            }
-                        }
-                    }
-                };
+                // ✅ LLAMA A TU BACKEND SEGURO
+                const response = await fetch(`${BACKEND_URL}/api/process-text`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: complexText })
+                });
 
-                const textResponse = await fetchWithExponentialBackoff(textApiUrl, textPayload);
-                const textResult = await textResponse.json();
+                const result = await response.json();
                 
-                const jsonText = textResult.candidates?.[0]?.content?.parts?.[0]?.text;
-                
-                if (!jsonText) {
-                    throw new Error("Gemini no generó el JSON. El texto de entrada podría ser muy corto o haber sido bloqueado por seguridad.");
+                if (!result.success) {
+                    throw new Error(result.message);
                 }
-                
-                console.log("[Gemini JSON Raw]", jsonText); 
-                geminiStructuredResponse = JSON.parse(jsonText);
 
-                // 2. Mostrar Resumen, Vocabulario y Quiz
+                // ✅ USA LOS DATOS DEL BACKEND
+                geminiStructuredResponse = result.data;
+
+                // Mostrar Resumen, Vocabulario y Quiz
                 const summary = geminiStructuredResponse.simplifiedSummary || '';
                 if (!summary || summary.length < 10) {
-                    throw new Error("El JSON se generó, pero el 'simplifiedSummary' está vacío o es muy corto.");
+                    throw new Error("El resumen está vacío o es muy corto.");
                 }
                 
                 summaryEl.textContent = summary;
@@ -538,7 +443,7 @@
                     </div>
                 `).join('');
 
-                // Generar y mostrar Quiz (Nueva Lógica)
+                // Generar y mostrar Quiz
                 renderQuiz(geminiStructuredResponse.multipleChoiceQuestions || []);
                 
                 ttsButtonEl.disabled = false;
@@ -550,17 +455,17 @@
                 summaryEl.textContent = 'Error: No se pudo procesar el texto.';
                 vocabListEl.textContent = 'Error al cargar vocabulario.';
                 quizContainerEl.innerHTML = '<p class="text-red-500">Error al cargar el quiz.</p>';
-                showMessage(`Ocurrió un error en el procesamiento de texto. Detalle: ${e.message}`, 'global-message', true);
+                showMessage(`Ocurrió un error: ${e.message}`, 'global-message', true);
             } finally {
                 setAppState(false, 'Proceso finalizado.');
             }
         }
 
-        // Función para renderizar el Quiz (NUEVA FUNCIÓN)
+        // Función para renderizar el Quiz
         function renderQuiz(questions) {
             const quizContainerEl = document.getElementById('quiz-container');
             quizContainerEl.innerHTML = '';
-            quizAnswers = questions.map(q => q.correctIndex); // Guardar respuestas correctas
+            quizAnswers = questions.map(q => q.correctIndex);
             
             if (questions.length === 0) {
                  quizContainerEl.innerHTML = '<p class="text-gray-500">No se pudieron generar preguntas de quiz basadas en el resumen.</p>';
@@ -574,7 +479,6 @@
 
                 q.options.forEach((option, oIndex) => {
                     const optionP = document.createElement('p');
-                    // Usamos las clases CSS del quiz que añadimos en la sección <style>
                     optionP.className = 'quiz-option'; 
                     optionP.textContent = `${String.fromCharCode(65 + oIndex)}. ${option}`;
                     optionP.setAttribute('data-q-index', qIndex);
@@ -587,23 +491,21 @@
             });
         }
         
-        // Función para manejar la selección de respuesta (NUEVA FUNCIÓN)
+        // Función para manejar la selección de respuesta
         function handleQuizAnswer(event) {
             const selectedOption = event.target;
             const qIndex = parseInt(selectedOption.getAttribute('data-q-index'));
             const oIndex = parseInt(selectedOption.getAttribute('data-o-index'));
             const correctIndex = quizAnswers[qIndex];
 
-            // Deshabilitar todas las opciones para esta pregunta
             const options = document.querySelectorAll(`[data-q-index="${qIndex}"]`);
             options.forEach(opt => {
-                opt.onclick = null; // Quitar el listener para que no se pueda cambiar
+                opt.onclick = null;
                 opt.classList.remove('selected');
                 
                 const index = parseInt(opt.getAttribute('data-o-index'));
                 
                 if (index === oIndex) {
-                    // Opción seleccionada
                     opt.classList.add('selected');
                     if (index === correctIndex) {
                         opt.classList.add('correct');
@@ -612,23 +514,18 @@
                     }
                 }
                 
-                // Resaltar la opción correcta si la seleccionada fue incorrecta
                 if (index === correctIndex && index !== oIndex) {
                     opt.classList.add('correct');
                 }
             });
         }
 
-
         // ====================================================================
-        // FUNCIÓN TTS (Texto a Voz) - AISLADA (MANTENIDA)
+        // FUNCIÓN TTS CORREGIDA
         // ====================================================================
         
-        let currentAudioUrl = null;
-
         async function generateTTS() {
-            // ... (El código de generateTTS y playAudio se mantiene igual)
-             const prompt = geminiStructuredResponse?.simplifiedSummary || '';
+            const prompt = geminiStructuredResponse?.simplifiedSummary || '';
             const audioPlayerEl = document.getElementById('tts-audio-player');
             const ttsButtonEl = document.getElementById('tts-button');
             const ttsPlayButtonEl = document.getElementById('tts-play-button');
@@ -638,42 +535,34 @@
                 return;
             }
 
-            // Deshabilitar botones TTS
             ttsButtonEl.disabled = true;
             ttsPlayButtonEl.disabled = true;
             audioPlayerEl.classList.add('hidden');
 
-            // Limpieza de URL anterior
             if (currentAudioUrl) {
                 URL.revokeObjectURL(currentAudioUrl);
                 currentAudioUrl = null;
             }
             
-            document.getElementById('process-status').textContent = 'Generando audio (2/2)...';
+            document.getElementById('process-status').textContent = 'Generando audio...';
             showMessage('Generando audio, por favor espera...', 'global-message', false);
 
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${API_KEY}`;
-            
-            const payload = {
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    responseModalities: ["AUDIO"],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: { voiceName: "Charon" } // Voz clara y estable
-                        }
-                    }
-                },
-                model: "gemini-2.5-flash-preview-tts"
-            };
-
             try {
-                const response = await fetchWithExponentialBackoff(apiUrl, payload);
+                // ✅ LLAMA A TU BACKEND PARA TTS
+                const response = await fetch(`${BACKEND_URL}/api/generate-audio`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: prompt })
+                });
+
                 const result = await response.json();
                 
-                const part = result?.candidates?.[0]?.content?.parts?.[0];
-                const audioData = part?.inlineData?.data;
-                const mimeType = part?.inlineData?.mimeType; 
+                if (!result.success) {
+                    throw new Error(result.message);
+                }
+
+                const audioData = result.audioData;
+                const mimeType = result.mimeType;
 
                 if (audioData && mimeType && mimeType.startsWith("audio/")) {
                     const rateMatch = mimeType.match(/rate=(\d+)/);
@@ -691,12 +580,12 @@
                     document.getElementById('process-status').textContent = 'Audio listo. Presiona Reproducir.';
                     showMessage('Audio generado con éxito. Ya puedes reproducirlo.', 'global-message', false);
                 } else {
-                    throw new Error("La API no devolvió datos de audio válidos. Esto suele pasar con textos muy cortos.");
+                    throw new Error("No se recibieron datos de audio válidos.");
                 }
 
             } catch (e) {
                 console.error("Error en la generación de TTS:", e);
-                showMessage(`Error de Audio: ${e.message}. Asegúrate de que el resumen no esté vacío.`, 'global-message', true);
+                showMessage(`Error de Audio: ${e.message}`, 'global-message', true);
             } finally {
                 ttsButtonEl.disabled = false; 
             }
@@ -711,12 +600,10 @@
             }
         }
 
-
         // ====================================================================
-        // LÓGICA DE PANTALLA DE CARGA (MANTENIDA)
+        // LÓGICA DE PANTALLA DE CARGA
         // ====================================================================
         
-        let loadTime = Date.now();
         let isContentLoaded = false;
         let isTimerFinished = false;
 
@@ -726,27 +613,21 @@
         }
 
         function startTimer() {
-            // Espera 5000 milisegundos (5 segundos)
             setTimeout(() => {
                 isTimerFinished = true;
                 attemptHideLoadingScreen();
-            }, 5000); 
+            }, 5000);
         }
 
         function attemptHideLoadingScreen() {
             const loadingScreen = document.getElementById('global-loading-screen');
-            
-            // Solo ocultar si la carga de contenido Y el temporizador han terminado
             if (isContentLoaded && isTimerFinished) {
                  loadingScreen.classList.add('loading-hidden');
             }
         }
 
-        // Llama a la lógica de la pantalla de carga al cargar la página.
         document.addEventListener('DOMContentLoaded', hideLoadingScreen);
         window.addEventListener('load', startTimer);
-
-
     </script>
 </body>
 </html>
