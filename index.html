@@ -266,17 +266,14 @@
                     <p id="simplified-summary" class="text-gray-800 leading-relaxed min-h-[100px]"></p>
                     
                     <div id="tts-controls" class="flex items-center space-x-3 mt-4 pt-4 border-t border-gray-100">
-                         <button onclick="generateTTS()" id="tts-button" class="action-button bg-green-600 hover:bg-green-700 px-4 py-2 text-sm disabled:opacity-50 min-w-0 flex-grow">
-                            <svg class="w-4 h-4 mr-1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M17.5 17.5l2.29-2.29"/><path d="M17.5 6.5l2.29 2.29"/></svg>
-                            Generar Audio
+                        <button onclick="toggleTTS()" id="tts-button" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg text-sm transition duration-150 hover:bg-green-700 disabled:bg-gray-300 disabled:text-gray-500 flex items-center justify-center w-full min-w-0">
+                            <svg id="tts-icon" class="w-5 h-5 inline mr-2" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5L6 9H2v6h4l5 4V5zM17.5 10c0 1.93-1.03 3.65-2.58 4.5M17.5 7.5c1.78 1.15 2.5 3.1 2.5 5 0 1.9-.72 3.85-2.5 5"/>
+                            </svg>
+                            <span id="tts-text">Escuchar Resumen</span>
                         </button>
-                        <button onclick="playAudio()" id="tts-play-button" class="action-button bg-gray-500 hover:bg-gray-600 px-4 py-2 text-sm disabled:opacity-50 min-w-0 flex-grow">
-                            <svg class="w-4 h-4 mr-1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            Reproducir
-                        </button>
-                        <audio id="tts-audio-player" class="w-full h-8 hidden"></audio>
                     </div>
-                </div>
+                    </div>
 
                 <div id="vocabulary-card" class="result-card min-h-0">
                     <h4 class="text-xl font-bold text-gray-700 mb-3 flex items-center">
@@ -291,7 +288,7 @@
             <div class="space-y-6">
                 <div id="quiz-card" class="result-card min-h-[430px]">
                     <h4 class="text-xl font-bold text-gray-700 mb-4 flex items-center border-b pb-2">
-                         <svg class="w-6 h-6 mr-2 text-purple-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 12h8"/><path d="M8 16h8"/></svg>
+                            <svg class="w-6 h-6 mr-2 text-purple-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 12h8"/><path d="M8 16h8"/></svg>
                         Mini-Quiz de Comprensión
                     </h4>
                     <div id="quiz-container" class="space-y-6">
@@ -309,9 +306,80 @@
         
         let geminiStructuredResponse = null; 
         let quizAnswers = [];
-        let currentAudioUrl = null;
+        
+        // ====================================================================
+        // NUEVAS VARIABLES Y LÓGICA TTS NATIVA
+        // ====================================================================
+        let simplifiedText = ''; // Almacena el texto simplificado para la lectura
+        let synth = window.speechSynthesis;
+        let utterance = null;
+        let isSpeaking = false;
 
-        // --- Funciones de Utilidad ---
+        function updateTTSButtonState() {
+            const ttsButtonEl = document.getElementById('tts-button');
+            const ttsTextEl = document.getElementById('tts-text');
+
+            // Cambia el texto y estilo del botón
+            if (isSpeaking) {
+                ttsTextEl.textContent = 'Detener Lectura';
+                ttsButtonEl.classList.remove('bg-green-600', 'hover:bg-green-700');
+                ttsButtonEl.classList.add('bg-red-600', 'hover:bg-red-700');
+            } else {
+                ttsTextEl.textContent = 'Escuchar Resumen';
+                ttsButtonEl.classList.remove('bg-red-600', 'hover:bg-red-700');
+                ttsButtonEl.classList.add('bg-green-600', 'hover:bg-green-700');
+            }
+        }
+
+        function toggleTTS() {
+            if (!simplifiedText) {
+                showMessage('Genera el resumen simplificado primero.', 'global-message', true);
+                return;
+            }
+            
+            // 1. Si ya está hablando, detener la lectura.
+            if (synth.speaking) {
+                synth.cancel();
+                isSpeaking = false;
+            } else {
+                // 2. Si no está hablando, comenzar la lectura.
+                utterance = new SpeechSynthesisUtterance(simplifiedText);
+                
+                // Intenta encontrar una voz en español (mejora la calidad)
+                const voices = synth.getVoices();
+                const spanishVoice = voices.find(voice => voice.lang.startsWith('es-'));
+
+                if (spanishVoice) {
+                    utterance.voice = spanishVoice;
+                } else {
+                    utterance.lang = 'es-ES'; // Fallback a español genérico
+                }
+                
+                utterance.rate = 1.0; 
+                utterance.pitch = 1.0; 
+
+                // Eventos de fin para restablecer el estado del botón
+                utterance.onend = () => { 
+                    isSpeaking = false; 
+                    updateTTSButtonState(); 
+                    document.getElementById('process-status').textContent = 'Lectura finalizada.';
+                };
+                utterance.onerror = (event) => {
+                    isSpeaking = false; 
+                    updateTTSButtonState();
+                    showMessage(`Error de voz: ${event.error}`, 'global-message', true);
+                }
+
+                synth.speak(utterance);
+                isSpeaking = true;
+                document.getElementById('process-status').textContent = 'Leyendo resumen...';
+            }
+            updateTTSButtonState();
+        }
+
+        // ====================================================================
+        // --- Funciones de Utilidad (MANTENIDAS) ---
+        // ====================================================================
 
         function showMessage(msg, elementId, isError = true) {
             const el = document.getElementById(elementId);
@@ -338,49 +406,8 @@
             status.textContent = statusText;
         }
 
-        function base64ToArrayBuffer(base64) {
-            const binaryString = atob(base64);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            return bytes.buffer;
-        }
-
-        function pcmToWav(pcmData, sampleRate) {
-            const numChannels = 1;
-            const bytesPerSample = 2;
-            const blockAlign = numChannels * bytesPerSample;
-            const byteRate = sampleRate * blockAlign;
-            const dataSize = pcmData.length * bytesPerSample;
-            const buffer = new ArrayBuffer(44 + dataSize);
-            const view = new DataView(buffer);
-
-            let offset = 0;
-            view.setUint32(offset, 0x52494646, false); offset += 4;
-            view.setUint32(offset, 36 + dataSize, true); offset += 4;
-            view.setUint32(offset, 0x57415645, false); offset += 4;
-            view.setUint32(offset, 0x666d7420, false); offset += 4;
-            view.setUint32(offset, 16, true); offset += 4;
-            view.setUint16(offset, 1, true); offset += 2;
-            view.setUint16(offset, numChannels, true); offset += 2;
-            view.setUint32(offset, sampleRate, true); offset += 4;
-            view.setUint32(offset, byteRate, true); offset += 4;
-            view.setUint16(offset, blockAlign, true); offset += 2;
-            view.setUint16(offset, 16, true); offset += 2;
-            view.setUint32(offset, 0x64617461, false); offset += 4;
-            view.setUint32(offset, dataSize, true); offset += 4;
-            
-            for (let i = 0; i < pcmData.length; i++, offset += 2) {
-                view.setInt16(offset, pcmData[i], true);
-            }
-
-            return new Blob([view], { type: 'audio/wav' });
-        }
-
         // ====================================================================
-        // FUNCIÓN PRINCIPAL CORREGIDA
+        // FUNCIÓN PRINCIPAL CORREGIDA (SE ELIMINÓ LÓGICA OBSOLETA DE PCM A WAV)
         // ====================================================================
 
         async function processAccessibility() {
@@ -390,7 +417,6 @@
             const vocabListEl = document.getElementById('vocabulary-list');
             const quizContainerEl = document.getElementById('quiz-container');
             const ttsButtonEl = document.getElementById('tts-button');
-            const ttsPlayButtonEl = document.getElementById('tts-play-button');
 
             if (complexText.split(' ').length < 20) {
                 showMessage('El texto es muy corto. Por favor, pega un texto de al menos 20 palabras para un análisis significativo.', 'global-message', true);
@@ -407,11 +433,15 @@
             vocabListEl.innerHTML = '<p class="text-gray-500">Cargando...</p>';
             quizContainerEl.innerHTML = '<p class="text-gray-500">Cargando preguntas...</p>';
             
+            // ✅ Limpieza y estado inicial de TTS
+            if (synth.speaking) { synth.cancel(); }
+            isSpeaking = false;
+            simplifiedText = ''; 
+            updateTTSButtonState();
             ttsButtonEl.disabled = true;
-            ttsPlayButtonEl.disabled = true;
 
             try {
-                // ✅ LLAMA A TU BACKEND SEGURO
+                // LLAMA A TU BACKEND SEGURO
                 const response = await fetch(`${BACKEND_URL}/api/process-text`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -424,7 +454,7 @@
                     throw new Error(result.message);
                 }
 
-                // ✅ USA LOS DATOS DEL BACKEND
+                // USA LOS DATOS DEL BACKEND
                 geminiStructuredResponse = result.data;
 
                 // Mostrar Resumen, Vocabulario y Quiz
@@ -434,6 +464,7 @@
                 }
                 
                 summaryEl.textContent = summary;
+                simplifiedText = summary; // ✅ ALMACENAR EL TEXTO PARA LA LECTURA
                 
                 const vocab = geminiStructuredResponse.keyVocabulary || [];
                 vocabListEl.innerHTML = vocab.map(item => `
@@ -446,8 +477,8 @@
                 // Generar y mostrar Quiz
                 renderQuiz(geminiStructuredResponse.multipleChoiceQuestions || []);
                 
-                ttsButtonEl.disabled = false;
-                setAppState(false, 'Simplificación y Quiz listos. Listo para generar audio.');
+                ttsButtonEl.disabled = false; // ✅ HABILITAR BOTÓN DE TTS
+                setAppState(false, 'Simplificación y Quiz listos. El resumen se puede leer en voz alta.');
                 showMessage('Resumen, vocabulario y Mini-Quiz de estudio listos.', 'global-message', false);
 
             } catch (e) {
@@ -461,7 +492,7 @@
             }
         }
 
-        // Función para renderizar el Quiz
+        // Función para renderizar el Quiz (MANTENIDA)
         function renderQuiz(questions) {
             const quizContainerEl = document.getElementById('quiz-container');
             quizContainerEl.innerHTML = '';
@@ -491,7 +522,7 @@
             });
         }
         
-        // Función para manejar la selección de respuesta
+        // Función para manejar la selección de respuesta (MANTENIDA)
         function handleQuizAnswer(event) {
             const selectedOption = event.target;
             const qIndex = parseInt(selectedOption.getAttribute('data-q-index'));
@@ -520,88 +551,9 @@
             });
         }
 
-        // ====================================================================
-        // FUNCIÓN TTS CORREGIDA
-        // ====================================================================
-        
-        async function generateTTS() {
-            const prompt = geminiStructuredResponse?.simplifiedSummary || '';
-            const audioPlayerEl = document.getElementById('tts-audio-player');
-            const ttsButtonEl = document.getElementById('tts-button');
-            const ttsPlayButtonEl = document.getElementById('tts-play-button');
-            
-            if (!prompt || prompt.length < 10) {
-                showMessage('El resumen está vacío. Presiona "Simplificar" primero.', 'global-message', true);
-                return;
-            }
-
-            ttsButtonEl.disabled = true;
-            ttsPlayButtonEl.disabled = true;
-            audioPlayerEl.classList.add('hidden');
-
-            if (currentAudioUrl) {
-                URL.revokeObjectURL(currentAudioUrl);
-                currentAudioUrl = null;
-            }
-            
-            document.getElementById('process-status').textContent = 'Generando audio...';
-            showMessage('Generando audio, por favor espera...', 'global-message', false);
-
-            try {
-                // ✅ LLAMA A TU BACKEND PARA TTS
-                const response = await fetch(`${BACKEND_URL}/api/generate-audio`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ text: prompt })
-                });
-
-                const result = await response.json();
-                
-                if (!result.success) {
-                    throw new Error(result.message);
-                }
-
-                const audioData = result.audioData;
-                const mimeType = result.mimeType;
-
-                if (audioData && mimeType && mimeType.startsWith("audio/")) {
-                    const rateMatch = mimeType.match(/rate=(\d+)/);
-                    const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
-                    
-                    const pcmData = base64ToArrayBuffer(audioData);
-                    const pcm16 = new Int16Array(pcmData);
-                    
-                    const wavBlob = pcmToWav(pcm16, sampleRate);
-                    currentAudioUrl = URL.createObjectURL(wavBlob);
-                    
-                    audioPlayerEl.src = currentAudioUrl;
-                    audioPlayerEl.classList.remove('hidden');
-                    ttsPlayButtonEl.disabled = false;
-                    document.getElementById('process-status').textContent = 'Audio listo. Presiona Reproducir.';
-                    showMessage('Audio generado con éxito. Ya puedes reproducirlo.', 'global-message', false);
-                } else {
-                    throw new Error("No se recibieron datos de audio válidos.");
-                }
-
-            } catch (e) {
-                console.error("Error en la generación de TTS:", e);
-                showMessage(`Error de Audio: ${e.message}`, 'global-message', true);
-            } finally {
-                ttsButtonEl.disabled = false; 
-            }
-        }
-
-        function playAudio() {
-            const audioPlayerEl = document.getElementById('tts-audio-player');
-            if (audioPlayerEl.src) {
-                audioPlayerEl.play();
-            } else {
-                showMessage('Genera el audio primero.', 'global-message', true);
-            }
-        }
 
         // ====================================================================
-        // LÓGICA DE PANTALLA DE CARGA
+        // LÓGICA DE PANTALLA DE CARGA (MANTENIDA)
         // ====================================================================
         
         let isContentLoaded = false;
@@ -631,8 +583,3 @@
     </script>
 </body>
 </html>
-
-
-
-
-
