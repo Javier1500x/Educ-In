@@ -581,5 +581,71 @@
         document.addEventListener('DOMContentLoaded', hideLoadingScreen);
         window.addEventListener('load', startTimer);
     </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* FONTS */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        
+        /* ESTILOS BASE Y FONDO DE LA APP */
+        * { margin: 0px; padding: 0px; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif; 
+            background-color: whitesmoke; 
+            min-height: 100vh;
+            overflow-x: hidden;
+            position: relative;
+            /* El body necesita tener espacio, por lo que he quitado el 'p-8 flex justify-center items-center' anterior */
+        }
+        
+        /* Estilos base del botón */
+        .action-button {
+            cursor: pointer;
+            text-decoration: none; 
+            display: inline-flex;
+            align-items: center;
+        }
+        /* Estilos del contenedor fijo */
+        .fixed-button-container {
+            position: fixed;
+            bottom: 20px; /* Separación del borde inferior */
+            right: 20px;  /* Separación del borde derecho */
+            z-index: 100; /* Asegura que esté por encima de otros elementos */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Contenedor Fijo: Posiciona el botón en la esquina inferior derecha -->
+    <div class="fixed-button-container">
+        <!-- El botón/enlace. Se ha ajustado el padding (p-2) para hacerlo más pequeño. -->
+        <a 
+            href="https://javier1500x.github.io/informacion/" 
+            target="_blank" 
+            class="action-button px-4 py-2 rounded-full bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-semibold hover:from-blue-700 hover:to-purple-700 transition-all shadow-xl hover:shadow-blue-500/60 flex items-center justify-center transform hover:scale-105"
+            role="button"
+            title="Ir a la página de información de Inclutext"
+        >
+            <!-- Icono, más pequeño (w-4 h-4) y sin margen extra -->
+            <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                <path d="M16 6l-4-4-4 4"/>
+                <path d="M12 2v13"/>
+            </svg>
+            <!-- Texto (pequeño y solo visible si hay espacio) -->
+            <span class="ml-2 hidden sm:inline">Ver Info</span>
+        </a>
+    </div>
+
+    <!-- Contenido de prueba para simular scroll y verificar la posición fija -->
+    <div class="p-20 text-center">
+        <h1 class="text-4xl font-bold mb-4">Página de Prueba</h1>
+        <p class="text-gray-600 mb-8">Desplázate hacia abajo para ver que el botón se mantiene fijo.</p>
+        <div class="h-[150vh] bg-gray-200 rounded-lg flex items-center justify-center">
+            <p class="text-gray-500">Espacio de contenido</p>
+        </div>
+    </div>
+
 </body>
 </html>
+
